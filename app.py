@@ -261,9 +261,15 @@ def extrair_video_id(url: str) -> str:
     return match.group(1)
 
 
-def carregar_cookies_da_env() -> dict:
-    conteudo = os.environ.get("YOUTUBE_COOKIES", "")
+def carregar_cookies() -> dict:
     cookies = {}
+    caminho = os.path.join(os.path.dirname(os.path.abspath(__file__)), "cookies.txt")
+    conteudo = ""
+    if os.path.exists(caminho):
+        with open(caminho, "r", encoding="utf-8") as f:
+            conteudo = f.read()
+    else:
+        conteudo = os.environ.get("YOUTUBE_COOKIES", "")
     for linha in conteudo.splitlines():
         linha = linha.strip()
         if not linha or linha.startswith("#"):
@@ -291,7 +297,7 @@ def transcribe():
         video_id = extrair_video_id(url)
 
         session = requests.Session()
-        cookies = carregar_cookies_da_env()
+        cookies = carregar_cookies()
         if cookies:
             session.cookies.update(cookies)
         session.headers.update({
