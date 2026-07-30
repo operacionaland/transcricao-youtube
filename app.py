@@ -4,6 +4,7 @@ import requests
 from flask import Flask, request, jsonify, send_from_directory
 from youtube_transcript_api import YouTubeTranscriptApi
 
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 app = Flask(__name__)
 
 
@@ -30,7 +31,7 @@ def carregar_cookies_da_env() -> dict:
 
 @app.route("/")
 def index():
-    return send_from_directory("public", "index.html")
+    return send_from_directory(os.path.join(BASE_DIR, "public"), "index.html")
 
 
 @app.route("/api/transcribe", methods=["POST"])
