@@ -14,15 +14,15 @@ export default {
       return jsonResp({ error: "JSON inválido" }, 400);
     }
 
-    const { video_id } = body;
+    const { video_id, cookie } = body;
     if (!video_id || !/^[a-zA-Z0-9_-]{11}$/.test(video_id)) {
       return jsonResp({ error: "video_id inválido" }, 400);
     }
 
     try {
-      const html  = await fetchPage(video_id);
+      const html  = await fetchPage(video_id, cookie || "");
       const track = chooseBestTrack(extractTracks(html));
-      const lines = await fetchTranscript(track.baseUrl, video_id);
+      const lines = await fetchTranscript(track.baseUrl, video_id, cookie || "");
       return jsonResp({ transcript: lines.join("\n"), video_id, lang: track.languageCode });
     } catch (err) {
       return jsonResp({ error: err.message }, 500);
@@ -45,16 +45,29 @@ function jsonResp(data, status = 200) {
   });
 }
 
-async function fetchPage(video_id) {
-  const r = await fetch(`https://www.youtube.com/watch?v=${video_id}`, {
-    headers: {
-      "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/124.0.0.0 Safari/537.36",
-      "Accept-Language": "pt-BR,pt;q=0.9,en-US;q=0.8,en;q=0.7",
-      "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-    },
-  });
-  if (!r.ok) throw new Error(`YouTube HTTP ${r.status}`);
-  return r.text();
+async function fetchPage(video_id, cookieStr) {
+  const headers = {
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
+    "Accept-Language": "pt-BR,pt;q=0.9,en-US;q=0.8,en;q=0.7",
+    "Sec-Fetch-Dest": "document",
+    "Sec-Fetch-Mode": "navigate",
+    "Sec-Fetch-Site": "none",
+    "Sec-Fetch-User": "?1",
+    "Upgrade-Insecure-Requests": "1",
+  };
+  if (cookieStr) headers["Cookie"] = cookieStr;
+
+  for (let attempt = 0; attempt < 3; attempt++) {
+    const r = await fetch(`https://www.youtube.com/watch?v=${video_id}`, { headers });
+    if (r.status === 429) {
+      await sleep(1500 * (attempt + 1));
+      continue;
+    }
+    if (!r.ok) throw new Error(`YouTube HTTP ${r.status}`);
+    return r.text();
+  }
+  throw new Error("YouTube está limitando requisições. Tente novamente em instantes.");
 }
 
 function extractTracks(html) {
@@ -76,13 +89,14 @@ function chooseBestTrack(tracks) {
   return tracks[0];
 }
 
-async function fetchTranscript(baseUrl, video_id) {
-  const r = await fetch(baseUrl + "&fmt=json3", {
-    headers: {
-      "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/124.0.0.0 Safari/537.36",
-      "Referer": `https://www.youtube.com/watch?v=${video_id}`,
-    },
-  });
+async function fetchTranscript(baseUrl, video_id, cookieStr) {
+  const headers = {
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/124.0.0.0 Safari/537.36",
+    "Referer": `https://www.youtube.com/watch?v=${video_id}`,
+  };
+  if (cookieStr) headers["Cookie"] = cookieStr;
+
+  const r = await fetch(baseUrl + "&fmt=json3", { headers });
   if (!r.ok) throw new Error(`Legenda HTTP ${r.status}`);
   const data = await r.json();
   const lines = [];
@@ -92,4 +106,8 @@ async function fetchTranscript(baseUrl, video_id) {
   }
   if (!lines.length) throw new Error("Legenda baixada mas sem conteúdo");
   return lines;
+}
+
+function sleep(ms) {
+  return new Promise(resolve => setTimeout(resolve, ms));
 }

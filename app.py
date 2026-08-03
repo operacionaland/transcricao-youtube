@@ -262,10 +262,34 @@ def extrair_video_id(url: str) -> str:
     return match.group(1)
 
 
+def carregar_cookie_header() -> str:
+    caminho = os.path.join(os.path.dirname(os.path.abspath(__file__)), "cookies.txt")
+    conteudo = ""
+    if os.path.exists(caminho):
+        with open(caminho, "r", encoding="utf-8") as f:
+            conteudo = f.read()
+    else:
+        conteudo = os.environ.get("YOUTUBE_COOKIES", "")
+    partes = []
+    for linha in conteudo.splitlines():
+        linha = linha.strip()
+        if not linha or linha.startswith("#"):
+            continue
+        campos = linha.split("\t")
+        if len(campos) >= 7:
+            partes.append(f"{campos[5]}={campos[6]}")
+    return "; ".join(partes)
+
+
 def buscar_transcript(video_id: str) -> list:
     if not WORKER_URL:
         raise Exception("TRANSCRIPT_WORKER_URL não configurada no servidor.")
-    resp = requests.post(WORKER_URL, json={"video_id": video_id}, timeout=30)
+    cookie = carregar_cookie_header()
+    resp = requests.post(
+        WORKER_URL,
+        json={"video_id": video_id, "cookie": cookie},
+        timeout=30,
+    )
     data = resp.json()
     if "error" in data:
         raise Exception(data["error"])
