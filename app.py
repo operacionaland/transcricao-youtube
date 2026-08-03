@@ -1,8 +1,9 @@
 import os
 import re
+import json
+import html as html_module
 import requests
 from flask import Flask, request, jsonify
-from youtube_transcript_api import YouTubeTranscriptApi
 
 app = Flask(__name__)
 
@@ -280,6 +281,52 @@ def carregar_cookies() -> dict:
     return cookies
 
 
+def buscar_transcript(video_id: str, cookies: dict) -> list:
+    session = requests.Session()
+    session.cookies.update(cookies)
+    session.headers.update({
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/124.0.0.0 Safari/537.36",
+        "Accept-Language": "pt-BR,pt;q=0.9,en-US;q=0.8,en;q=0.7",
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+    })
+
+    resp = session.get(f"https://www.youtube.com/watch?v={video_id}", timeout=20)
+    resp.raise_for_status()
+
+    match = re.search(r'"captionTracks":(\[.+?\])', resp.text)
+    if not match:
+        blocked = ["Sign in to confirm", "Faça login", "accounts.google.com", "consent.youtube"]
+        if any(s in resp.text[:5000] for s in blocked):
+            raise Exception("YouTube bloqueou a requisição. Atualize os cookies.")
+        raise Exception("Nenhuma legenda encontrada para este vídeo.")
+
+    tracks = json.loads(match.group(1))
+    if not tracks:
+        raise Exception("Nenhuma faixa de legenda disponível.")
+
+    chosen = None
+    for lang_prefix in ["pt", "en"]:
+        for t in tracks:
+            if t.get("languageCode", "").startswith(lang_prefix):
+                chosen = t
+                break
+        if chosen:
+            break
+    if not chosen:
+        chosen = tracks[0]
+
+    cap_resp = session.get(chosen["baseUrl"] + "&fmt=json3", timeout=20)
+    cap_resp.raise_for_status()
+
+    lines = []
+    for ev in cap_resp.json().get("events", []):
+        text = "".join(s.get("utf8", "") for s in ev.get("segs", [])).strip()
+        if text and text != "\n":
+            lines.append(html_module.unescape(text))
+
+    return lines
+
+
 @app.route("/")
 def index():
     return INDEX_HTML, 200, {"Content-Type": "text/html; charset=utf-8"}
@@ -295,19 +342,8 @@ def transcribe():
 
     try:
         video_id = extrair_video_id(url)
-
-        session = requests.Session()
         cookies = carregar_cookies()
-        if cookies:
-            session.cookies.update(cookies)
-        session.headers.update({
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120.0 Safari/537.36"
-        })
-
-        ytt_api = YouTubeTranscriptApi(http_client=session)
-        trechos = ytt_api.fetch(video_id, languages=["pt", "pt-BR", "en"])
-        linhas = [t.text for t in trechos if t.text.strip()]
-
+        linhas = buscar_transcript(video_id, cookies)
         return jsonify({"transcript": "\n".join(linhas), "video_id": video_id})
 
     except ValueError as e:
