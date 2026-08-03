@@ -14,15 +14,15 @@ export default {
       return jsonResp({ error: "JSON inválido" }, 400);
     }
 
-    const { video_id, cookie } = body;
+    const { video_id } = body;
     if (!video_id || !/^[a-zA-Z0-9_-]{11}$/.test(video_id)) {
       return jsonResp({ error: "video_id inválido" }, 400);
     }
 
     try {
-      const html  = await fetchPage(video_id, cookie || "");
+      const html  = await fetchPage(video_id);
       const track = chooseBestTrack(extractTracks(html));
-      const lines = await fetchTranscript(track.baseUrl, video_id, cookie || "");
+      const lines = await fetchTranscript(track.baseUrl, video_id);
       return jsonResp({ transcript: lines.join("\n"), video_id, lang: track.languageCode });
     } catch (err) {
       return jsonResp({ error: err.message }, 500);
@@ -45,23 +45,24 @@ function jsonResp(data, status = 200) {
   });
 }
 
-async function fetchPage(video_id, cookieStr) {
-  const headers = {
-    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
-    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
-    "Accept-Language": "pt-BR,pt;q=0.9,en-US;q=0.8,en;q=0.7",
-    "Sec-Fetch-Dest": "document",
-    "Sec-Fetch-Mode": "navigate",
-    "Sec-Fetch-Site": "none",
-    "Sec-Fetch-User": "?1",
-    "Upgrade-Insecure-Requests": "1",
-  };
-  if (cookieStr) headers["Cookie"] = cookieStr;
+const PAGE_HEADERS = {
+  "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+  "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
+  "Accept-Language": "pt-BR,pt;q=0.9,en-US;q=0.8,en;q=0.7",
+  "Sec-Fetch-Dest": "document",
+  "Sec-Fetch-Mode": "navigate",
+  "Sec-Fetch-Site": "none",
+  "Sec-Fetch-User": "?1",
+  "Upgrade-Insecure-Requests": "1",
+};
 
-  for (let attempt = 0; attempt < 3; attempt++) {
-    const r = await fetch(`https://www.youtube.com/watch?v=${video_id}`, { headers });
+async function fetchPage(video_id) {
+  for (let i = 0; i < 4; i++) {
+    const r = await fetch(`https://www.youtube.com/watch?v=${video_id}`, {
+      headers: PAGE_HEADERS,
+    });
     if (r.status === 429) {
-      await sleep(1500 * (attempt + 1));
+      await sleep(2000 * (i + 1));
       continue;
     }
     if (!r.ok) throw new Error(`YouTube HTTP ${r.status}`);
@@ -71,7 +72,7 @@ async function fetchPage(video_id, cookieStr) {
 }
 
 function extractTracks(html) {
-  const m = html.match(/"captionTracks":(\[.+?\])/);
+  const m = html.match(/"captionTracks"\s*:\s*(\[.+?\])/);
   if (!m) {
     const blocked = ["Sign in to confirm", "Faça login"].some(s => html.includes(s));
     throw new Error(blocked ? "Vídeo exige login" : "Nenhuma legenda disponível para este vídeo");
@@ -89,14 +90,13 @@ function chooseBestTrack(tracks) {
   return tracks[0];
 }
 
-async function fetchTranscript(baseUrl, video_id, cookieStr) {
-  const headers = {
-    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/124.0.0.0 Safari/537.36",
-    "Referer": `https://www.youtube.com/watch?v=${video_id}`,
-  };
-  if (cookieStr) headers["Cookie"] = cookieStr;
-
-  const r = await fetch(baseUrl + "&fmt=json3", { headers });
+async function fetchTranscript(baseUrl, video_id) {
+  const r = await fetch(baseUrl + "&fmt=json3", {
+    headers: {
+      "User-Agent": PAGE_HEADERS["User-Agent"],
+      "Referer": `https://www.youtube.com/watch?v=${video_id}`,
+    },
+  });
   if (!r.ok) throw new Error(`Legenda HTTP ${r.status}`);
   const data = await r.json();
   const lines = [];
