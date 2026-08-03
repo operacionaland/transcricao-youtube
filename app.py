@@ -1,11 +1,11 @@
 import os
 import re
-import json
-import html as html_module
 import requests
 from flask import Flask, request, jsonify
 
 app = Flask(__name__)
+
+WORKER_URL = os.environ.get("TRANSCRIPT_WORKER_URL", "")
 
 INDEX_HTML = r"""<!DOCTYPE html>
 <html lang="pt-BR">
@@ -262,69 +262,14 @@ def extrair_video_id(url: str) -> str:
     return match.group(1)
 
 
-def carregar_cookies() -> dict:
-    cookies = {}
-    caminho = os.path.join(os.path.dirname(os.path.abspath(__file__)), "cookies.txt")
-    conteudo = ""
-    if os.path.exists(caminho):
-        with open(caminho, "r", encoding="utf-8") as f:
-            conteudo = f.read()
-    else:
-        conteudo = os.environ.get("YOUTUBE_COOKIES", "")
-    for linha in conteudo.splitlines():
-        linha = linha.strip()
-        if not linha or linha.startswith("#"):
-            continue
-        partes = linha.split("\t")
-        if len(partes) >= 7:
-            cookies[partes[5]] = partes[6]
-    return cookies
-
-
-def buscar_transcript(video_id: str, cookies: dict) -> list:
-    session = requests.Session()
-    session.cookies.update(cookies)
-    session.headers.update({
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/124.0.0.0 Safari/537.36",
-        "Accept-Language": "pt-BR,pt;q=0.9,en-US;q=0.8,en;q=0.7",
-        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-    })
-
-    resp = session.get(f"https://www.youtube.com/watch?v={video_id}", timeout=20)
-    resp.raise_for_status()
-
-    match = re.search(r'"captionTracks":(\[.+?\])', resp.text)
-    if not match:
-        blocked = ["Sign in to confirm", "Faça login", "accounts.google.com", "consent.youtube"]
-        if any(s in resp.text[:5000] for s in blocked):
-            raise Exception("YouTube bloqueou a requisição. Atualize os cookies.")
-        raise Exception("Nenhuma legenda encontrada para este vídeo.")
-
-    tracks = json.loads(match.group(1))
-    if not tracks:
-        raise Exception("Nenhuma faixa de legenda disponível.")
-
-    chosen = None
-    for lang_prefix in ["pt", "en"]:
-        for t in tracks:
-            if t.get("languageCode", "").startswith(lang_prefix):
-                chosen = t
-                break
-        if chosen:
-            break
-    if not chosen:
-        chosen = tracks[0]
-
-    cap_resp = session.get(chosen["baseUrl"] + "&fmt=json3", timeout=20)
-    cap_resp.raise_for_status()
-
-    lines = []
-    for ev in cap_resp.json().get("events", []):
-        text = "".join(s.get("utf8", "") for s in ev.get("segs", [])).strip()
-        if text and text != "\n":
-            lines.append(html_module.unescape(text))
-
-    return lines
+def buscar_transcript(video_id: str) -> list:
+    if not WORKER_URL:
+        raise Exception("TRANSCRIPT_WORKER_URL não configurada no servidor.")
+    resp = requests.post(WORKER_URL, json={"video_id": video_id}, timeout=30)
+    data = resp.json()
+    if "error" in data:
+        raise Exception(data["error"])
+    return data["transcript"].split("\n")
 
 
 @app.route("/")
@@ -342,8 +287,7 @@ def transcribe():
 
     try:
         video_id = extrair_video_id(url)
-        cookies = carregar_cookies()
-        linhas = buscar_transcript(video_id, cookies)
+        linhas = buscar_transcript(video_id)
         return jsonify({"transcript": "\n".join(linhas), "video_id": video_id})
 
     except ValueError as e:
