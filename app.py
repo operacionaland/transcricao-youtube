@@ -262,6 +262,12 @@ def extrair_video_id(url: str) -> str:
     return match.group(1)
 
 
+_COOKIES_ESSENCIAIS = {
+    "SID", "SSID", "HSID", "APISID", "SAPISID",
+    "__Secure-3PAPISID", "__Secure-3PSID", "__Secure-3PSIDTS", "__Secure-3PSIDCC",
+    "LOGIN_INFO", "VISITOR_INFO1_LIVE", "YSC", "PREF", "CONSENT", "SOCS",
+}
+
 def carregar_cookie_header() -> str:
     caminho = os.path.join(os.path.dirname(os.path.abspath(__file__)), "cookies.txt")
     conteudo = ""
@@ -276,7 +282,7 @@ def carregar_cookie_header() -> str:
         if not linha or linha.startswith("#"):
             continue
         campos = linha.split("\t")
-        if len(campos) >= 7:
+        if len(campos) >= 7 and campos[5] in _COOKIES_ESSENCIAIS:
             partes.append(f"{campos[5]}={campos[6]}")
     return "; ".join(partes)
 
